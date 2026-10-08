@@ -42,7 +42,7 @@ O painel foi estruturado em camadas lógicas para fornecer visibilidade total e 
 
 *Visão geral do painel operacional de infraestrutura:*
 
-![Painel de Monitorização NOC](./img_zabbix.png)
+![Painel de Monitorização NOC](./img/img_zabbix.png)
 
 ---
 
