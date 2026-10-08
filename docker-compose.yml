@@ -1,27 +1,79 @@
 services:
-  web-app:
-    image: nginx:latest
+  # Banco de Dados para o Zabbix
+  mysql-server:
+    image: mariadb:10.11
+    container_name: portfolio-mysql
+    environment:
+      - MARIADB_ROOT_PASSWORD=zabbix_root
+      - MARIADB_USER=zabbix
+      - MARIADB_PASSWORD=zabbix
+      - MARIADB_DATABASE=zabbix
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - portfolio-net
+    restart: unless-stopped
+
+  # Servidor Zabbix (Backend)
+  zabbix-server:
+    image: zabbix/zabbix-server-mysql:alpine-7.0-latest
+    container_name: portfolio-zabbix-server
+    environment:
+      - DB_SERVER_HOST=mysql-server
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=zabbix
+      - TZ=America/Manaus
+    ports:
+      - "10051:10051"
+    depends_on:
+      - mysql-server
+    networks:
+      - portfolio-net
+    restart: unless-stopped
+
+  # Interface Web do Zabbix (Frontend)
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-mysql:alpine-7.0-latest
+    container_name: portfolio-zabbix-web
+    environment:
+      - DB_SERVER_HOST=mysql-server
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=zabbix
+      - ZBX_SERVER_HOST=zabbix-server
+      - TZ=America/Manaus
+      - PHP_TZ=America/Manaus
+    ports:
+      - "8081:8080" # A porta interna do web no Zabbix 7.0 mudou para 8080
+    depends_on:
+      - mysql-server
+      - zabbix-server
+    networks:
+      - portfolio-net
+    restart: unless-stopped
+
+  # Servidor Web (Seu Nginx original)
+  nginx:
+    image: nginx:1.26-alpine
     container_name: portfolio-nginx
     ports:
       - "8080:80"
-    restart: always
+    networks:
+      - portfolio-net
+    restart: unless-stopped
 
-  zabbix-appliance:
-    image: zabbix/zabbix-appliance:latest
-    container_name: portfolio-zabbix
-    ports:
-      - "10051:10051"
-      - "8081:80"
-    environment:
-      - ZBX_PASSIVE_ALLOW=true
-    restart: always
-
+  # Grafana
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.3
     container_name: portfolio-grafana
     ports:
       - "3000:3000"
-    restart: always
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - portfolio-net
+    restart: unless-stopped
+
+networks:
+  portfolio-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
