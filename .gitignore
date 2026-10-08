@@ -1,0 +1,13 @@
+# Arquivos do Sistema Operacional
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs e dados temporários do Docker / Grafana
+*.log
+data/
+tmp/
+
+# Credenciais e arquivos de ambiente sensíveis
+.env
+*.pem

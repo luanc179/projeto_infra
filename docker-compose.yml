@@ -1,0 +1,27 @@
+services:
+  web-app:
+    image: nginx:latest
+    container_name: portfolio-nginx
+    ports:
+      - "8080:80"
+    restart: always
+
+  zabbix-appliance:
+    image: zabbix/zabbix-appliance:latest
+    container_name: portfolio-zabbix
+    ports:
+      - "10051:10051"
+      - "8081:80"
+    environment:
+      - ZBX_PASSIVE_ALLOW=true
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: portfolio-grafana
+    ports:
+      - "3000:3000"
+    restart: always
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
