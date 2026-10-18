@@ -1,57 +1,149 @@
-# 🛡️ Enterprise Network & Infrastructure Monitoring Center (NOC)
+# Lab de monitoramento: Zabbix + Grafana + Nginx com Docker Compose
 
-> **Contexto do Projeto:** Arquitetura de observabilidade e monitorização de missão crítica implementada para um Centro de Operações de Rede (NOC) num ambiente de grande escala, alta disponibilidade e rigorosos padrões de segurança.
+> **English summary:** a self-contained monitoring lab built with Docker Compose: Zabbix 7.0 LTS (server, web and agent), MariaDB, Grafana with the Zabbix plugin and an Nginx reverse proxy. A Python script (`zabbix_utils`) provisions the Zabbix objects through the API and a second one simulates CPU metrics for 20 servers. All data is simulated and the stack is meant for study, not for production.
 
----
+## O que é
 
-## 📌 Visão Geral
-Este repositório documenta o desenho e a implantação de um painel centralizado para monitorizar uma infraestrutura de TI híbrida e complexa. O ecossistema abrange toda a topologia de rede (switches core e de acesso, firewalls e gateways), servidores físicos, clusters de virtualização, telefonia IP (VoIP), sistemas corporativos essenciais e a rede de segurança física (CFTV).
+Projeto de estudo e portfólio. Reproduz, em escala de laboratório, o tipo de ambiente de monitoramento (Zabbix + Grafana) com o qual já trabalhei em ambiente corporativo. **Todos os dados são simulados** e este repositório não contém informações de nenhuma organização.
 
----
+O que o laboratório demonstra:
 
-## 🚀 Implantação e Infraestrutura do Sistema
+- Subir uma stack de monitoramento completa com **Docker Compose** (healthcheck, rede dedicada, volumes nomeados, segredos fora do código).
+- **Nginx como proxy reverso** na frente do Zabbix Web e do Grafana (inclui suporte a WebSocket para o Grafana Live).
+- **Grafana provisionado por arquivos**: plugin e datasource do Zabbix já chegam configurados.
+- **Automação em Python**: o script de setup cria template, item, trigger e hosts pela API do Zabbix (idempotente), e o simulador envia métricas pelo protocolo trapper.
 
-Para garantir resiliência, fácil manutenção e rápida escalabilidade, o próprio ambiente de monitorização foi estruturado utilizando práticas modernas de DevOps:
+## Arquitetura
 
-* **Conteinerização (Docker Compose):** Todo o ecossistema da ferramenta de monitorização (Server, Banco de Dados, Agentes e Web) foi provisionado em contentores utilizando **Docker**, com a orquestração e gestão dos serviços definida via `docker-compose.yml`.
-* **Servidor Web & Proxy (Nginx):** A interface gráfica (frontend) e os painéis de visualização foram servidos de forma otimizada, rápida e segura utilizando o **Nginx** como servidor web/proxy.
+```mermaid
+flowchart LR
+    U[Navegador] -->|:8080| N[Nginx]
+    U -->|:3000| N
+    N --> ZW[Zabbix Web]
+    N --> G[Grafana]
+    G -->|API JSON-RPC| ZW
+    ZW --> DB[(MariaDB)]
+    ZS[Zabbix Server] --> DB
+    ZS -->|passivo :10050| ZA[Zabbix Agent2]
+    SIM[Simulador Python] -->|trapper :10051| ZS
+    SET[Script de setup] -->|API| ZW
+```
 
----
+| Serviço | Imagem | Acesso no host |
+|---|---|---|
+| Zabbix Web | `zabbix/zabbix-web-nginx-mysql:alpine-7.0-latest` | via Nginx: http://localhost:8080 |
+| Grafana | `grafana/grafana` (versão em `GRAFANA_VERSION`) | via Nginx: http://localhost:3000 |
+| Zabbix Server | `zabbix/zabbix-server-mysql:alpine-7.0-latest` | porta `10051` (recebe o simulador) |
+| Zabbix Agent2 | `zabbix/zabbix-agent2:alpine-7.0-latest` | somente rede interna |
+| Banco de dados | `mariadb:10.11` | somente rede interna |
+| Proxy | `nginx:1.26-alpine` | portas `8080` e `3000` |
 
-## 🏗️ Arquitetura e Ativos Monitorizados
+## Pré-requisitos
 
-O painel foi estruturado em camadas lógicas para fornecer visibilidade total e em tempo real da operação:
+- Docker e Docker Compose v2
+- Python 3.9+ (para os scripts que rodam no host)
 
-* **Topologia de Rede (Core & Acesso):** Mapeamento de gateways e switches em cascata, com monitorização de conectividade (ICMP) e análise de tráfego em tempo real para os links de internet (Conexão Principal e Secundária).
-* **Servidores Físicos & Virtualização:** Controlo de saúde (health check), disponibilidade de hardware e monitorização de recursos em clusters de máquinas virtuais.
-* **Sistemas e Aplicações Corporativas:** Acompanhamento ativo do estado de serviços internos e bases de dados essenciais para a operação da instituição.
-* **Telecomunicações (VoIP):** Monitorização de centrais telefónicas e terminais IP distribuídos pelas instalações.
-* **Segurança Física (CFTV):** Verificação contínua da disponibilidade de gravadores de vídeo (NVR) e câmaras de vigilância integradas na rede.
+## Como subir
 
----
+```bash
+# 1. Configuração: copie o exemplo e TROQUE as senhas
+cp .env.example .env
 
-## 📊 Principais Funcionalidades Implementadas
+# 2. Suba o ambiente (a primeira inicialização leva 1 a 2 minutos)
+docker compose up -d
+docker compose ps
 
-* **Mapas de Topologia Dinâmicos:** Criação de dashboards visuais no Zabbix refletindo a árvore exata de dependências lógicas e físicas da infraestrutura.
-* **Análise de Tráfego de Banda:** Gráficos interativos exibindo tráfego em Megabits por segundo (Mbps) e largura de banda consumida nas portas críticas.
-* **Gestão de Incidentes em Tempo Real:** Tabela de alertas integrada com níveis de severidade automatizados (ex: *[Alta] Equipamento inatingível (ICMP)*, *[Médio] Erros de transmissão na porta*), registo de tempo de inatividade e estado de intervenção da equipa de suporte.
+# 3. Dependências dos scripts
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 
----
+# 4. Crie template, item, trigger e 20 hosts simulados via API
+python scripts/setup_zabbix.py
 
-## 📸 Demonstração do Ambiente (Dashboard Executivo)
+# 5. Envie métricas simuladas (Ctrl+C para parar)
+python scripts/simulador_zabbix.py
+```
 
-*Visão geral do painel operacional de infraestrutura:*
+Atalhos com `make`: `make up`, `make setup`, `make simulate`, `make logs`, `make down` e `make reset` (apaga os volumes).
 
-![Painel de Monitorização NOC](./img_zabbix.png)
+### Acessos
 
----
+| O quê | Onde | Credenciais iniciais |
+|---|---|---|
+| Zabbix | http://localhost:8080 | `Admin` / `zabbix` (**troque a senha no primeiro acesso**) |
+| Grafana | http://localhost:3000 | valores de `GRAFANA_ADMIN_USER` e `GRAFANA_ADMIN_PASSWORD` no `.env` |
 
-## 🛠️ Tecnologias e Ferramentas Utilizadas
-* **Plataforma de Observabilidade:** Zabbix
-* **Orquestração e Web:** Docker, Docker Compose, Nginx
-* **Protocolos de Recolha de Dados:** SNMP (v2c/v3), ICMP (Ping), Zabbix Agent
-* **Ativos Monitorizados:** Switches L2/L3, Servidores Rack, Gateways, NVRs, Telefonia IP
-* **Ambientes:** Infraestrutura Física (Bare-metal) e Redes Virtualizadas
+Ao trocar a senha do `Admin` no Zabbix, atualize `ZABBIX_ADMIN_PASSWORD` no `.env` e recrie o Grafana (`docker compose up -d grafana`) para o datasource continuar funcionando.
 
----
-*Projeto documentado para demonstrar competências avançadas em administração de redes, conteinerização e sistemas de monitorização corporativa para centros de resposta a incidentes (NOC).*
+### Primeiros passos no Grafana
+
+O plugin e o datasource **Zabbix** já vêm provisionados. Para ver dados rapidamente: abra **Plugins → Zabbix → aba Dashboards** e importe um dos dashboards que acompanham o plugin, ou crie o seu em **Dashboards → New** escolhendo o datasource Zabbix e o grupo `Lab/Servidores Simulados`.
+
+## O que o script de setup cria
+
+| Objeto | Nome |
+|---|---|
+| Grupo de hosts | `Lab/Servidores Simulados` |
+| Grupo de templates | `Lab/Templates` |
+| Template | `Template Lab Servidor Simulado` |
+| Item (trapper) | `cpu.simulada`, numérico, em % |
+| Trigger | `CPU simulada acima de 90% em {HOST.NAME}` (severidade Average) |
+| Hosts | `Servidor-Simulado-01` a `Servidor-Simulado-20` |
+| Ajuste extra | interface do host `Zabbix server` apontada para o contêiner `zabbix-agent` |
+
+Rodar o script de novo não duplica nada. A quantidade de hosts muda com `--hosts N` (use o mesmo valor no simulador).
+
+## Estrutura do repositório
+
+```
+.
+├── docker-compose.yml
+├── .env.example
+├── requirements.txt
+├── Makefile
+├── nginx/
+│   └── default.conf                  # proxy reverso Zabbix (8080) e Grafana (3000)
+├── grafana/provisioning/
+│   ├── datasources/zabbix.yml        # datasource Zabbix
+│   └── plugins/zabbix-app.yml        # habilita o app do Zabbix
+├── scripts/
+│   ├── comum.py                      # leitura do .env e nomes dos hosts
+│   ├── setup_zabbix.py               # provisiona objetos via API do Zabbix
+│   └── simulador_zabbix.py           # envia métricas simuladas (trapper)
+└── docs/img/                         # prints do ambiente rodando
+```
+
+## Decisões de projeto
+
+- **Segredos fora do código:** senhas vêm do `.env` (ignorado pelo Git); o compose falha com mensagem clara se faltarem.
+- **`depends_on` com healthcheck:** o Zabbix só sobe depois que o MariaDB aceita conexões.
+- **Superfície mínima:** banco, Zabbix Web e Grafana não publicam portas no host; só o Nginx e o trapper (10051).
+- **Provisionamento por arquivos:** o Grafana nasce configurado e o ambiente é reproduzível com `docker compose up`.
+- **Setup idempotente:** cada objeto é consultado antes de ser criado.
+
+## Segurança
+
+Este ambiente é um **laboratório**. Não o exponha na internet nem o use em produção: não há TLS, a senha inicial do Zabbix é conhecida e o trapper aceita dados de qualquer origem. Para um uso real, seria preciso TLS no Nginx, usuários de API dedicados com permissões mínimas, restrição de origem no trapper e backup do banco.
+
+## Solução de problemas
+
+- **Simulador mostra `falhas > 0`:** os hosts ou o item ainda não existem. Rode `python scripts/setup_zabbix.py`.
+- **Setup não conecta:** aguarde o Zabbix terminar de inicializar (`docker compose logs -f zabbix-server`). O script tenta novamente por até 2,5 minutos.
+- **Plugin do Zabbix não aparece no Grafana:** veja `docker compose logs grafana`. Se for incompatibilidade de versão, fixe uma versão anterior em `GRAFANA_VERSION` no `.env` e rode `docker compose up -d grafana`.
+- **Host "Zabbix server" indisponível:** ajuste a interface do agente para DNS `zabbix-agent`, porta `10050`.
+- **Porta ocupada:** altere `NGINX_ZABBIX_PORT` ou `NGINX_GRAFANA_PORT` no `.env` (e `ZABBIX_WEB_URL`, se mudar a porta do Zabbix).
+
+
+## Prints do ambiente
+
+![Painel de Monitorização Zabbix](docs/img/img_zabbix.png)
+
+![Grafana com o datasource Zabbix](docs/img/grafana-zabbix.png)
+
+![docker compose ps](docs/img/compose-ps.png)
+-->
+
+## Licença
+
+MIT. Veja o arquivo [LICENSE](LICENSE).

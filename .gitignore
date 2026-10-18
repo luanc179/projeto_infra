@@ -1,13 +1,22 @@
-# Arquivos do Sistema Operacional
+# Segredos e ambiente
+.env
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Editor / sistema operacional
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Logs e dados temporários do Docker / Grafana
+# Logs e temporários
 *.log
-data/
 tmp/
-
-# Credenciais e arquivos de ambiente sensíveis
-.env
-*.pem
+data/
