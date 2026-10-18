@@ -1,79 +1,130 @@
+# Laboratório de monitoramento: Zabbix 7.0 LTS + MariaDB + Grafana, atrás de um proxy Nginx.
+# Todas as senhas vêm do arquivo .env (copie .env.example para .env antes de subir).
+
+name: lab-zabbix-grafana
+
 services:
-  # Banco de Dados para o Zabbix
-  mysql-server:
+  # Banco de dados do Zabbix
+  db:
     image: mariadb:10.11
-    container_name: portfolio-mysql
+    container_name: lab-db
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
     environment:
-      - MARIADB_ROOT_PASSWORD=zabbix_root
-      - MARIADB_USER=zabbix
-      - MARIADB_PASSWORD=zabbix
-      - MARIADB_DATABASE=zabbix
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD no arquivo .env}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-zabbix}
+      MARIADB_USER: ${MYSQL_USER:-zabbix}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD no arquivo .env}
+      TZ: ${TZ:-America/Manaus}
     volumes:
-      - mysql_data:/var/lib/mysql
+      - db_data:/var/lib/mysql
     networks:
-      - portfolio-net
+      - lab-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
-  # Servidor Zabbix (Backend)
+  # Zabbix Server (backend). A porta 10051 fica exposta para o simulador enviar métricas (trapper).
   zabbix-server:
     image: zabbix/zabbix-server-mysql:alpine-7.0-latest
-    container_name: portfolio-zabbix-server
+    container_name: lab-zabbix-server
     environment:
-      - DB_SERVER_HOST=mysql-server
-      - MYSQL_USER=zabbix
-      - MYSQL_PASSWORD=zabbix
-      - TZ=America/Manaus
+      DB_SERVER_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zabbix}
+      MYSQL_USER: ${MYSQL_USER:-zabbix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD no arquivo .env}
+      TZ: ${TZ:-America/Manaus}
     ports:
       - "10051:10051"
     depends_on:
-      - mysql-server
+      db:
+        condition: service_healthy
     networks:
-      - portfolio-net
+      - lab-net
     restart: unless-stopped
 
-  # Interface Web do Zabbix (Frontend)
-  zabbix-web:
-    image: zabbix/zabbix-web-nginx-mysql:alpine-7.0-latest
-    container_name: portfolio-zabbix-web
+  # Agente que monitora o próprio host "Zabbix server" (o script de setup ajusta a interface para este contêiner)
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:alpine-7.0-latest
+    container_name: lab-zabbix-agent
     environment:
-      - DB_SERVER_HOST=mysql-server
-      - MYSQL_USER=zabbix
-      - MYSQL_PASSWORD=zabbix
-      - ZBX_SERVER_HOST=zabbix-server
-      - TZ=America/Manaus
-      - PHP_TZ=America/Manaus
-    ports:
-      - "8081:8080" # A porta interna do web no Zabbix 7.0 mudou para 8080
+      ZBX_HOSTNAME: "Zabbix server"
+      ZBX_SERVER_HOST: zabbix-server
+      TZ: ${TZ:-America/Manaus}
     depends_on:
-      - mysql-server
       - zabbix-server
     networks:
-      - portfolio-net
+      - lab-net
     restart: unless-stopped
 
-  # Servidor Web (Seu Nginx original)
+  # Interface web do Zabbix (sem porta publicada: o acesso é pelo Nginx)
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-mysql:alpine-7.0-latest
+    container_name: lab-zabbix-web
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: "Lab Zabbix"
+      DB_SERVER_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zabbix}
+      MYSQL_USER: ${MYSQL_USER:-zabbix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD no arquivo .env}
+      PHP_TZ: ${TZ:-America/Manaus}
+      TZ: ${TZ:-America/Manaus}
+    depends_on:
+      db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    networks:
+      - lab-net
+    restart: unless-stopped
+
+  # Grafana com o plugin do Zabbix; datasource e plugin são provisionados por arquivos
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-13.2.3}
+    container_name: lab-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD no arquivo .env}
+      GF_INSTALL_PLUGINS: alexanderzobnin-zabbix-app
+      GF_USERS_DEFAULT_THEME: dark
+      # Usadas na interpolação do provisionamento (grafana/provisioning/datasources/zabbix.yml)
+      ZABBIX_ADMIN_USER: ${ZABBIX_ADMIN_USER:-Admin}
+      ZABBIX_ADMIN_PASSWORD: ${ZABBIX_ADMIN_PASSWORD:-zabbix}
+      TZ: ${TZ:-America/Manaus}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - zabbix-web
+    networks:
+      - lab-net
+    restart: unless-stopped
+
+  # Proxy reverso: porta 8080 -> Zabbix Web | porta 3000 -> Grafana
   nginx:
     image: nginx:1.26-alpine
-    container_name: portfolio-nginx
+    container_name: lab-nginx
     ports:
-      - "8080:80"
+      - "${NGINX_ZABBIX_PORT:-8080}:80"
+      - "${NGINX_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - zabbix-web
+      - grafana
     networks:
-      - portfolio-net
-    restart: unless-stopped
-
-  # Grafana
-  grafana:
-    image: grafana/grafana:13.2.3
-    container_name: portfolio-grafana
-    ports:
-      - "3000:3000"
-    networks:
-      - portfolio-net
+      - lab-net
     restart: unless-stopped
 
 networks:
-  portfolio-net:
+  lab-net:
     driver: bridge
 
 volumes:
-  mysql_data:
+  db_data:
+  grafana_data:
